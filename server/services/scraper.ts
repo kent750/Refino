@@ -1,5 +1,8 @@
 import { chromium } from 'playwright';
 import type { InsertReference } from '@shared/schema';
+import path from 'path';
+import fs from 'fs/promises';
+import crypto from 'crypto';
 
 export interface ScrapedReference {
   title: string;
@@ -55,6 +58,26 @@ export class WebScraper {
         return results;
       }, limit);
       
+      // --- ここから1件目だけ本物のスクリーンショットを保存するサンプル ---
+      if (references.length > 0) {
+        const ref = references[0];
+        try {
+          // 参照元サイトを新しいページで開く
+          const detailPage = await browser.newPage();
+          await detailPage.goto(ref.url, { waitUntil: 'networkidle', timeout: 20000 });
+          // ファイル名をURLのハッシュで一意化
+          const hash = crypto.createHash('sha256').update(ref.url).digest('hex');
+          const screenshotPath = path.join(process.cwd(), 'public', 'screenshots', `${hash}.png`);
+          await detailPage.screenshot({ path: screenshotPath, fullPage: true });
+          await detailPage.close();
+          // imageUrlを差し替え
+          ref.imageUrl = `/screenshots/${hash}.png`;
+        } catch (e) {
+          // スクリーンショット失敗時は元のimageUrlのまま
+        }
+      }
+      // --- サンプルここまで ---
+
       await browser.close();
       return references;
     } catch (error) {
