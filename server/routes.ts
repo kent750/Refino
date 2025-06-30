@@ -286,20 +286,32 @@ Source: ${reference.source}`;
   app.post("/api/signup", async (req, res) => {
     try {
       const { email, password } = req.body;
+      console.log('Signup attempt:', { email, password: '***' });
+      
       if (!email || !password) {
         return res.status(400).json({ message: "メールアドレスとパスワードは必須です" });
       }
+      
       // 既存ユーザー確認
       const existing = await db.select().from(users).where(eq(users.email, email));
       if (existing.length > 0) {
         return res.status(409).json({ message: "このメールアドレスは既に登録されています" });
       }
+      
       const passwordHash = await hashPassword(password);
-      const [user] = await db.insert(users).values({ email, passwordHash }).returning();
+      const [user] = await db.insert(users).values({ 
+        email, 
+        passwordHash 
+      }).returning();
+      
       const token = signJwt({ id: user.id, email: user.email });
       res.status(201).json({ token, user: { id: user.id, email: user.email } });
     } catch (e) {
-      res.status(500).json({ message: "サインアップに失敗しました" });
+      console.error('Signup error:', e);
+      res.status(500).json({ 
+        message: "サインアップに失敗しました",
+        error: e instanceof Error ? e.message : "Unknown error"
+      });
     }
   });
 
