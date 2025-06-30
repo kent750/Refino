@@ -11,6 +11,7 @@ import { Palette, Bot, Plus, FolderSync, Bookmark } from "lucide-react";
 export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedColor, setSelectedColor] = useState<string | undefined>(undefined);
   const [isScrapingLoading, setIsScrapingLoading] = useState(false);
   const { toast } = useToast();
 
@@ -138,6 +139,8 @@ export default function Home() {
       <FilterSection 
         selectedTags={selectedTags}
         onTagsChange={setSelectedTags}
+        selectedColor={selectedColor}
+        onColorChange={setSelectedColor}
       />
 
       {/* Gallery View */}
