@@ -1,6 +1,7 @@
 import { references, tags, type Reference, type InsertReference, type Tag, type SearchParams } from "@shared/schema";
 import { db, pool } from "./db";
 import { eq, and, or, like, sql, desc } from "drizzle-orm";
+import { users } from "@shared/schema";
 
 export interface IStorage {
   // Reference CRUD operations
@@ -19,6 +20,13 @@ export interface IStorage {
   
   // Bulk operations for scraping
   createReferences(references: InsertReference[]): Promise<Reference[]>;
+
+  // User operations
+  findUserByEmail(email: string): Promise<any | null>;
+  createUser({ email, passwordHash }: { email: string; passwordHash: string }): Promise<any>;
+
+  // New operation
+  findReferenceByUrl(url: string, userId: number): Promise<Reference | null>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -200,6 +208,21 @@ export class DatabaseStorage implements IStorage {
     }
     
     return createdReferences;
+  }
+
+  async findUserByEmail(email: string) {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user || null;
+  }
+
+  async createUser({ email, passwordHash }: { email: string; passwordHash: string }) {
+    const [user] = await db.insert(users).values({ email, passwordHash }).returning();
+    return user;
+  }
+
+  async findReferenceByUrl(url: string, userId: number) {
+    const [ref] = await db.select().from(references).where(and(eq(references.url, url), eq(references.userId, userId)));
+    return ref || null;
   }
 }
 

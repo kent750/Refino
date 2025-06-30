@@ -3,12 +3,14 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { scraper } from "./services/scraper";
 import { aiAnalyzer } from "./services/aiAnalyzer";
-import { searchSchema, insertReferenceSchema } from "@shared/schema";
+import { searchSchema, insertReferenceSchema, users, insertUserSchema } from "@shared/schema";
 import { z } from "zod";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Get all references with search and filtering
-  app.get("/api/references", async (req, res) => {
+  app.get("/api/references", authenticateJWT, async (req, res) => {
     try {
       const params = searchSchema.parse({
         query: req.query.query as string,
@@ -17,60 +19,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limit: req.query.limit ? parseInt(req.query.limit as string) : 20,
         offset: req.query.offset ? parseInt(req.query.offset as string) : 0,
       });
-
-      // Debug: log the parsed parameters
-      console.log('Search params:', params);
-
+      // userIdで絞り込み
+      params.userId = req.userId;
       const result = await storage.searchReferences(params);
       res.json(result);
     } catch (error) {
-      console.error('Error searching references:', error);
-      res.status(400).json({ 
-        message: "Invalid search parameters",
-        error: error instanceof Error ? error.message : "Unknown error"
-      });
+      res.status(400).json({ message: "Invalid search parameters", error: error instanceof Error ? error.message : "Unknown error" });
     }
   });
 
   // Get single reference by ID
-  app.get("/api/references/:id", async (req, res) => {
+  app.get("/api/references/:id", authenticateJWT, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const reference = await storage.getReference(id);
-      
-      if (!reference) {
+      if (!reference || reference.userId !== req.userId) {
         return res.status(404).json({ message: "Reference not found" });
       }
-      
       res.json(reference);
     } catch (error) {
-      console.error('Error getting reference:', error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
 
   // Create new reference manually with AI analysis
-  app.post("/api/references", async (req, res) => {
+  app.post("/api/references", authenticateJWT, async (req, res) => {
     try {
-      // Remove old Zod validation line that was causing errors
       const { url, title, description, useAI = true } = req.body;
-      
       if (!url) {
         return res.status(400).json({ message: "URL is required" });
       }
-
-      // Basic reference data
+      // 重複URLがあれば統合（更新）
+      let existing = await storage.findReferenceByUrl(url, req.userId);
       let referenceData = {
-        title: title || "新しいリファレンス",
-        description: description || null,
+        title: title || (existing ? existing.title : "新しいリファレンス"),
+        description: description || (existing ? existing.description : null),
         url,
-        imageUrl: null,
-        tags: [],
-        source: "手動追加",
-        aiAnalyzed: false
+        imageUrl: existing ? existing.imageUrl : null,
+        tags: existing ? existing.tags : [],
+        source: existing ? existing.source : "手動追加",
+        aiAnalyzed: existing ? existing.aiAnalyzed : false,
+        userId: req.userId,
       };
-
-      // AI analysis if requested and available
       if (useAI) {
         try {
           const analysis = await aiAnalyzer.analyzeReference(referenceData);
@@ -78,19 +68,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           referenceData.description = analysis.enhancedDescription || referenceData.description;
           referenceData.aiAnalyzed = true;
         } catch (aiError) {
-          console.log('AI analysis failed, proceeding without enhanced analysis:', aiError.message);
           referenceData.tags = ["未分類"];
         }
       } else {
-        // Manual entry without AI
         referenceData.tags = req.body.tags || ["未分類"];
       }
-
-      const reference = await storage.createReference(referenceData);
+      let reference;
+      if (existing) {
+        reference = await storage.updateReference(existing.id, referenceData);
+      } else {
+        reference = await storage.createReference(referenceData);
+      }
       res.status(201).json(reference);
     } catch (error) {
-      console.error('Error creating reference:', error);
-      res.status(500).json({ message: "Failed to create reference", error: error.message });
+      res.status(500).json({ message: "Failed to create reference", error: error instanceof Error ? error.message : "Unknown error" });
     }
   });
 
@@ -243,6 +234,65 @@ Source: ${reference.source}`;
       });
     }
   });
+
+  // サインアップAPI
+  app.post("/api/signup", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ message: "メールアドレスとパスワードは必須です" });
+      }
+      // 既存ユーザー確認
+      const existing = await storage.findUserByEmail(email);
+      if (existing) {
+        return res.status(409).json({ message: "既に登録済みのメールアドレスです" });
+      }
+      const passwordHash = await bcrypt.hash(password, 10);
+      const user = await storage.createUser({ email, passwordHash });
+      // JWT発行
+      const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET || "devsecret", { expiresIn: "7d" });
+      res.status(201).json({ token, user: { id: user.id, email: user.email } });
+    } catch (error) {
+      res.status(500).json({ message: "サインアップ失敗", error: error.message });
+    }
+  });
+
+  // ログインAPI
+  app.post("/api/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ message: "メールアドレスとパスワードは必須です" });
+      }
+      const user = await storage.findUserByEmail(email);
+      if (!user) {
+        return res.status(401).json({ message: "メールアドレスまたはパスワードが違います" });
+      }
+      const valid = await bcrypt.compare(password, user.passwordHash);
+      if (!valid) {
+        return res.status(401).json({ message: "メールアドレスまたはパスワードが違います" });
+      }
+      const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET || "devsecret", { expiresIn: "7d" });
+      res.json({ token, user: { id: user.id, email: user.email } });
+    } catch (error) {
+      res.status(500).json({ message: "ログイン失敗", error: error.message });
+    }
+  });
+
+  function authenticateJWT(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: '認証トークンが必要です' });
+    }
+    const token = authHeader.split(' ')[1];
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'devsecret');
+      req.userId = decoded.userId;
+      next();
+    } catch (err) {
+      return res.status(401).json({ message: '無効なトークンです' });
+    }
+  }
 
   const httpServer = createServer(app);
   return httpServer;
