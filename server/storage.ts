@@ -104,7 +104,7 @@ export class DatabaseStorage implements IStorage {
     // Filter by tags
     if (params.tags && params.tags.length > 0) {
       const tagConditions = params.tags.map(tag => 
-        sql`${references.tags} ? ${tag}`
+        sql`${references.tags}::jsonb @> ${JSON.stringify([tag])}::jsonb`
       );
       conditions.push(or(...tagConditions));
     }
