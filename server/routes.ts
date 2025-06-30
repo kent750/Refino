@@ -18,6 +18,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         offset: req.query.offset ? parseInt(req.query.offset as string) : 0,
       });
 
+      // Debug: log the parsed parameters
+      console.log('Search params:', params);
+
       const result = await storage.searchReferences(params);
       res.json(result);
     } catch (error) {
