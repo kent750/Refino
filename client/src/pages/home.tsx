@@ -9,10 +9,12 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Palette, Bot, FolderSync } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 
 export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [autoExpand, setAutoExpand] = useState(true);
 
   const [isScrapingLoading, setIsScrapingLoading] = useState(false);
   const { toast } = useToast();
@@ -42,8 +44,6 @@ export default function Home() {
     }
   };
 
-
-
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -68,9 +68,13 @@ export default function Home() {
             <Link href="/settings" className="text-muted-foreground hover:text-foreground transition-colors">
               設定
             </Link>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-muted-foreground">自動拡充</span>
+              <Switch checked={autoExpand} onCheckedChange={setAutoExpand} />
+            </div>
             <Button 
               onClick={handleStartScraping}
-              disabled={isScrapingLoading}
+              disabled={isScrapingLoading || !autoExpand}
               className="bg-primary hover:bg-primary/90"
             >
               <Bot className="w-4 h-4 mr-2" />
@@ -102,7 +106,7 @@ export default function Home() {
           <div className="flex flex-wrap justify-center gap-3 mb-8">
             <Button 
               onClick={handleStartScraping}
-              disabled={isScrapingLoading}
+              disabled={isScrapingLoading || !autoExpand}
               size="lg"
               className="bg-primary hover:bg-primary/90"
             >
@@ -125,8 +129,6 @@ export default function Home() {
         searchQuery={searchQuery}
         selectedTags={selectedTags}
       />
-
-
 
       {/* ユーザーガイド */}
       <UserGuide showOnFirstVisit={true} />

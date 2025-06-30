@@ -1,7 +1,7 @@
 import { references, tags, type Reference, type InsertReference, type Tag, type SearchParams } from "@shared/schema";
 import { db, pool } from "./db";
 import { eq, and, or, like, sql, desc } from "drizzle-orm";
-import { users } from "@shared/schema";
+import { normalizeUrl } from "./utils";
 
 export interface IStorage {
   // Reference CRUD operations
@@ -20,13 +20,6 @@ export interface IStorage {
   
   // Bulk operations for scraping
   createReferences(references: InsertReference[]): Promise<Reference[]>;
-
-  // User operations
-  findUserByEmail(email: string): Promise<any | null>;
-  createUser({ email, passwordHash }: { email: string; passwordHash: string }): Promise<any>;
-
-  // New operation
-  findReferenceByUrl(url: string, userId: number): Promise<Reference | null>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -52,10 +45,41 @@ export class DatabaseStorage implements IStorage {
     return reference || undefined;
   }
 
-  async createReference(insertReference: InsertReference): Promise<Reference> {
+  async createReference(insertReference: InsertReference & { userId?: number }): Promise<Reference> {
+    // 既存URLチェック（正規化して比較、かつuserIdで分離）
+    const normalizedUrl = normalizeUrl(insertReference.url);
+    const whereClause = insertReference.userId != null
+      ? and(eq(references.url, normalizedUrl), eq(references.userId, insertReference.userId as number))
+      : eq(references.url, normalizedUrl);
+    const existing = await db.select().from(references).where(whereClause);
+    if (existing && existing.length > 0) {
+      // 統合: タグ・説明・AI分析情報をマージ/更新
+      const old = existing[0];
+      const oldTags: string[] = Array.isArray(old.tags) ? Array.from(old.tags).map(String) : [];
+      const newTags: string[] = Array.isArray(insertReference.tags) ? Array.from(insertReference.tags).map(String) : [];
+      const mergedTags: string[] = Array.from(new Set([...oldTags, ...newTags]));
+      const mergedDescription = insertReference.description || old.description;
+      const mergedAI = insertReference.aiAnalyzed || old.aiAnalyzed;
+      const mergedSource = insertReference.source || old.source;
+      const mergedImageUrl = insertReference.imageUrl || old.imageUrl;
+      const [updated] = await db
+        .update(references)
+        .set({
+          title: insertReference.title || old.title,
+          description: mergedDescription,
+          tags: mergedTags as any,
+          aiAnalyzed: mergedAI,
+          source: mergedSource,
+          imageUrl: mergedImageUrl,
+        })
+        .where(eq(references.id, old.id))
+        .returning();
+      return updated;
+    }
+    // 新規追加
     const [reference] = await db
       .insert(references)
-      .values([insertReference])
+      .values([{ ...insertReference, url: normalizedUrl, userId: insertReference.userId ?? undefined }])
       .returning();
     return reference;
   }
@@ -77,7 +101,7 @@ export class DatabaseStorage implements IStorage {
     return (result as any).rowCount > 0;
   }
 
-  async searchReferences(params: SearchParams): Promise<{ references: Reference[], total: number }> {
+  async searchReferences(params: SearchParams & { userId?: number }): Promise<{ references: Reference[], total: number }> {
     try {
       // Build SQL conditions using raw PostgreSQL
       let whereConditions: string[] = [];
@@ -114,6 +138,13 @@ export class DatabaseStorage implements IStorage {
       if (params.source) {
         whereConditions.push(`source = $${paramIndex}`);
         queryParams.push(params.source);
+        paramIndex++;
+      }
+
+      // userId条件追加
+      if (params.userId) {
+        whereConditions.push(`userId = $${paramIndex}`);
+        queryParams.push(params.userId);
         paramIndex++;
       }
 
@@ -183,46 +214,14 @@ export class DatabaseStorage implements IStorage {
       .where(eq(tags.name, name));
   }
 
-  async createReferences(insertReferences: InsertReference[]): Promise<Reference[]> {
-    if (insertReferences.length === 0) return [];
-    
-    const createdReferences = await db
-      .insert(references)
-      .values(insertReferences)
-      .returning();
-    
-    // Update tag counts
-    const allTags = insertReferences.flatMap(ref => ref.tags || []);
-    const uniqueTags = [...new Set(allTags)];
-    
-    for (const tagName of uniqueTags) {
-      const tagCount = allTags.filter(t => t === tagName).length;
-      try {
-        await this.createTag(tagName);
-        for (let i = 0; i < tagCount; i++) {
-          await this.incrementTagCount(tagName);
-        }
-      } catch (error) {
-        console.error(`Error updating tag count for ${tagName}:`, error);
-      }
+  async createReferences(insertReferences: (InsertReference & { userId?: number })[]): Promise<Reference[]> {
+    // URL重複を統合（正規化して処理、userIdで分離）
+    const results: Reference[] = [];
+    for (const ref of insertReferences) {
+      const created = await this.createReference({ ...ref, url: normalizeUrl(ref.url), userId: ref.userId ?? undefined });
+      results.push(created);
     }
-    
-    return createdReferences;
-  }
-
-  async findUserByEmail(email: string) {
-    const [user] = await db.select().from(users).where(eq(users.email, email));
-    return user || null;
-  }
-
-  async createUser({ email, passwordHash }: { email: string; passwordHash: string }) {
-    const [user] = await db.insert(users).values({ email, passwordHash }).returning();
-    return user;
-  }
-
-  async findReferenceByUrl(url: string, userId: number) {
-    const [ref] = await db.select().from(references).where(and(eq(references.url, url), eq(references.userId, userId)));
-    return ref || null;
+    return results;
   }
 }
 

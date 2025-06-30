@@ -3,14 +3,15 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { scraper } from "./services/scraper";
 import { aiAnalyzer } from "./services/aiAnalyzer";
-import { searchSchema, insertReferenceSchema, users, insertUserSchema } from "@shared/schema";
+import { searchSchema, insertReferenceSchema } from "@shared/schema";
 import { z } from "zod";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
+import { users } from "./db";
+import { hashPassword, comparePassword, signJwt, verifyJwt } from "./services/auth";
+import { eq } from "drizzle-orm";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Get all references with search and filtering
-  app.get("/api/references", authenticateJWT, async (req, res) => {
+  app.get("/api/references", requireAuth, async (req, res) => {
     try {
       const params = searchSchema.parse({
         query: req.query.query as string,
@@ -19,48 +20,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limit: req.query.limit ? parseInt(req.query.limit as string) : 20,
         offset: req.query.offset ? parseInt(req.query.offset as string) : 0,
       });
-      // userIdで絞り込み
-      params.userId = req.userId;
-      const result = await storage.searchReferences(params);
+
+      // Debug: log the parsed parameters
+      console.log('Search params:', params);
+
+      const result = await storage.searchReferences({ ...params, userId: (req as any).user.id });
       res.json(result);
     } catch (error) {
-      res.status(400).json({ message: "Invalid search parameters", error: error instanceof Error ? error.message : "Unknown error" });
+      console.error('Error searching references:', error);
+      res.status(400).json({ 
+        message: "Invalid search parameters",
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
     }
   });
 
   // Get single reference by ID
-  app.get("/api/references/:id", authenticateJWT, async (req, res) => {
+  app.get("/api/references/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const reference = await storage.getReference(id);
-      if (!reference || reference.userId !== req.userId) {
+      
+      if (reference?.userId !== (req as any).user.id) {
+        return res.status(403).json({ message: "権限がありません" });
+      }
+      
+      if (!reference) {
         return res.status(404).json({ message: "Reference not found" });
       }
+      
       res.json(reference);
     } catch (error) {
+      console.error('Error getting reference:', error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
 
   // Create new reference manually with AI analysis
-  app.post("/api/references", authenticateJWT, async (req, res) => {
+  app.post("/api/references", requireAuth, async (req, res) => {
     try {
+      // Remove old Zod validation line that was causing errors
       const { url, title, description, useAI = true } = req.body;
+      
       if (!url) {
         return res.status(400).json({ message: "URL is required" });
       }
-      // 重複URLがあれば統合（更新）
-      let existing = await storage.findReferenceByUrl(url, req.userId);
+
+      // Basic reference data
       let referenceData = {
-        title: title || (existing ? existing.title : "新しいリファレンス"),
-        description: description || (existing ? existing.description : null),
+        title: title || "新しいリファレンス",
+        description: description || null,
         url,
-        imageUrl: existing ? existing.imageUrl : null,
-        tags: existing ? existing.tags : [],
-        source: existing ? existing.source : "手動追加",
-        aiAnalyzed: existing ? existing.aiAnalyzed : false,
-        userId: req.userId,
+        imageUrl: null,
+        tags: [],
+        source: "手動追加",
+        aiAnalyzed: false,
+        userId: (req as any).user.id,
       };
+
+      // AI analysis if requested and available
       if (useAI) {
         try {
           const analysis = await aiAnalyzer.analyzeReference(referenceData);
@@ -68,25 +86,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           referenceData.description = analysis.enhancedDescription || referenceData.description;
           referenceData.aiAnalyzed = true;
         } catch (aiError) {
+          console.log('AI analysis failed, proceeding without enhanced analysis:', aiError.message);
           referenceData.tags = ["未分類"];
         }
       } else {
+        // Manual entry without AI
         referenceData.tags = req.body.tags || ["未分類"];
       }
-      let reference;
-      if (existing) {
-        reference = await storage.updateReference(existing.id, referenceData);
-      } else {
-        reference = await storage.createReference(referenceData);
-      }
+
+      const reference = await storage.createReference(referenceData);
       res.status(201).json(reference);
     } catch (error) {
-      res.status(500).json({ message: "Failed to create reference", error: error instanceof Error ? error.message : "Unknown error" });
+      console.error('Error creating reference:', error);
+      res.status(500).json({ message: "Failed to create reference", error: error.message });
     }
   });
 
   // Start automatic scraping and AI analysis
-  app.post("/api/scrape", async (req, res) => {
+  app.post("/api/scrape", requireAuth, async (req, res) => {
     try {
       const { source, limit } = req.body;
       const limitPerSite = limit || 10;
@@ -125,6 +142,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           source: scraped.source,
           tags: analysis.tags,
           aiAnalyzed: true,
+          userId: (req as any).user.id,
         };
       });
 
@@ -145,7 +163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get all available tags
-  app.get("/api/tags", async (req, res) => {
+  app.get("/api/tags", requireAuth, async (req, res) => {
     try {
       const tags = await storage.getAllTags();
       res.json(tags);
@@ -156,9 +174,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete reference
-  app.delete("/api/references/:id", async (req, res) => {
+  app.delete("/api/references/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      const reference = await storage.getReference(id);
+      
+      if (reference?.userId !== (req as any).user.id) {
+        return res.status(403).json({ message: "権限がありません" });
+      }
+      
       const success = await storage.deleteReference(id);
       
       if (!success) {
@@ -173,10 +197,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Copy reference to clipboard (returns formatted text)
-  app.post("/api/references/:id/copy", async (req, res) => {
+  app.post("/api/references/:id/copy", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const reference = await storage.getReference(id);
+      
+      if (reference?.userId !== (req as any).user.id) {
+        return res.status(403).json({ message: "権限がありません" });
+      }
       
       if (!reference) {
         return res.status(404).json({ message: "Reference not found" });
@@ -199,10 +227,14 @@ Source: ${reference.source}`;
   });
 
   // Trigger AI re-analysis for a specific reference
-  app.post("/api/references/:id/analyze", async (req, res) => {
+  app.post("/api/references/:id/analyze", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const reference = await storage.getReference(id);
+      
+      if (reference?.userId !== (req as any).user.id) {
+        return res.status(403).json({ message: "権限がありません" });
+      }
       
       if (!reference) {
         return res.status(404).json({ message: "Reference not found" });
@@ -235,7 +267,22 @@ Source: ${reference.source}`;
     }
   });
 
-  // サインアップAPI
+  // JWT認証ミドルウェア
+  function requireAuth(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: '認証が必要です' });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const payload = verifyJwt(token);
+    if (!payload) {
+      return res.status(401).json({ message: '無効なトークンです' });
+    }
+    req.user = payload;
+    next();
+  }
+
+  // サインアップ
   app.post("/api/signup", async (req, res) => {
     try {
       const { email, password } = req.body;
@@ -243,56 +290,46 @@ Source: ${reference.source}`;
         return res.status(400).json({ message: "メールアドレスとパスワードは必須です" });
       }
       // 既存ユーザー確認
-      const existing = await storage.findUserByEmail(email);
-      if (existing) {
-        return res.status(409).json({ message: "既に登録済みのメールアドレスです" });
+      const existing = await db.select().from(users).where(eq(users.email, email));
+      if (existing.length > 0) {
+        return res.status(409).json({ message: "このメールアドレスは既に登録されています" });
       }
-      const passwordHash = await bcrypt.hash(password, 10);
-      const user = await storage.createUser({ email, passwordHash });
-      // JWT発行
-      const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET || "devsecret", { expiresIn: "7d" });
+      const passwordHash = await hashPassword(password);
+      const [user] = await db.insert(users).values({ email, passwordHash }).returning();
+      const token = signJwt({ id: user.id, email: user.email });
       res.status(201).json({ token, user: { id: user.id, email: user.email } });
-    } catch (error) {
-      res.status(500).json({ message: "サインアップ失敗", error: error.message });
+    } catch (e) {
+      res.status(500).json({ message: "サインアップに失敗しました" });
     }
   });
 
-  // ログインAPI
+  // ログイン
   app.post("/api/login", async (req, res) => {
     try {
       const { email, password } = req.body;
       if (!email || !password) {
         return res.status(400).json({ message: "メールアドレスとパスワードは必須です" });
       }
-      const user = await storage.findUserByEmail(email);
-      if (!user) {
+      const existing = await db.select().from(users).where(eq(users.email, email));
+      if (existing.length === 0) {
         return res.status(401).json({ message: "メールアドレスまたはパスワードが違います" });
       }
-      const valid = await bcrypt.compare(password, user.passwordHash);
-      if (!valid) {
+      const user = existing[0];
+      const ok = await comparePassword(password, user.passwordHash);
+      if (!ok) {
         return res.status(401).json({ message: "メールアドレスまたはパスワードが違います" });
       }
-      const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET || "devsecret", { expiresIn: "7d" });
+      const token = signJwt({ id: user.id, email: user.email });
       res.json({ token, user: { id: user.id, email: user.email } });
-    } catch (error) {
-      res.status(500).json({ message: "ログイン失敗", error: error.message });
+    } catch (e) {
+      res.status(500).json({ message: "ログインに失敗しました" });
     }
   });
 
-  function authenticateJWT(req, res, next) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ message: '認証トークンが必要です' });
-    }
-    const token = authHeader.split(' ')[1];
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'devsecret');
-      req.userId = decoded.userId;
-      next();
-    } catch (err) {
-      return res.status(401).json({ message: '無効なトークンです' });
-    }
-  }
+  // ログアウト（クライアント側でトークン破棄するだけなのでAPIはダミー）
+  app.post("/api/logout", requireAuth, (req, res) => {
+    res.json({ message: "ログアウトしました" });
+  });
 
   const httpServer = createServer(app);
   return httpServer;
