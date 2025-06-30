@@ -14,8 +14,7 @@ export function useReferences(params: SearchParams) {
       searchParams.set('limit', params.limit.toString());
       searchParams.set('offset', params.offset.toString());
       
-      const response = await fetch(`/api/references?${searchParams}`);
-      if (!response.ok) throw new Error('Failed to fetch references');
+      const response = await apiRequest("GET", `/api/references?${searchParams}`);
       return response.json();
     },
   });
