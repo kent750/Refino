@@ -90,6 +90,12 @@ Changelog:
   - Created fallback scraping system (Playwright constraints resolved)
   - Added OpenAI integration for automatic tag generation
   - Deployed full Japanese UI with search, filter, and copy features
+- June 30, 2025. Added user onboarding and UI optimization
+  - Created comprehensive UserGuide component with tooltips and first-visit modal
+  - Replaced prompt-based manual addition with proper AddReferenceDialog
+  - Added ダッシュボード, コレクション, 設定 pages with full navigation
+  - Simplified interface by removing redundant floating action buttons
+  - Implemented guided user experience for better usability
 ```
 
 ## User Preferences

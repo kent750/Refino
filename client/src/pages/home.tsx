@@ -3,15 +3,17 @@ import { Link } from "wouter";
 import SearchBar from "@/components/SearchBar";
 import FilterSection from "@/components/FilterSection";
 import GalleryView from "@/components/GalleryView";
+import UserGuide from "@/components/UserGuide";
+import AddReferenceDialog from "@/components/AddReferenceDialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Palette, Bot, Plus, FolderSync, Bookmark } from "lucide-react";
+import { Palette, Bot, FolderSync } from "lucide-react";
 
 export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [selectedColor, setSelectedColor] = useState<string | undefined>(undefined);
+
   const [isScrapingLoading, setIsScrapingLoading] = useState(false);
   const { toast } = useToast();
 
@@ -40,27 +42,7 @@ export default function Home() {
     }
   };
 
-  const handleAddReference = async (url: string) => {
-    try {
-      const response = await apiRequest("POST", "/api/references", {
-        url,
-        useAI: true
-      });
-      
-      const result = await response.json();
-      
-      toast({
-        title: "リファレンス追加完了",
-        description: `「${result.title}」をAI分析付きで追加しました`,
-      });
-    } catch (error) {
-      toast({
-        title: "追加エラー",
-        description: "リファレンスの追加に失敗しました。URLを確認してください。",
-        variant: "destructive",
-      });
-    }
-  };
+
 
   return (
     <div className="min-h-screen bg-background">
@@ -119,21 +101,15 @@ export default function Home() {
           {/* Quick Actions */}
           <div className="flex flex-wrap justify-center gap-3 mb-8">
             <Button 
-              variant="secondary" 
               onClick={handleStartScraping}
               disabled={isScrapingLoading}
+              size="lg"
+              className="bg-primary hover:bg-primary/90"
             >
               <Bot className="w-4 h-4 mr-2" />
-              AI自動収集
+              {isScrapingLoading ? "AI分析中..." : "AI自動収集"}
             </Button>
-            <Button variant="secondary">
-              <FolderSync className="w-4 h-4 mr-2" />
-              最新更新
-            </Button>
-            <Button variant="secondary">
-              <Bookmark className="w-4 h-4 mr-2" />
-              保存済み
-            </Button>
+            <AddReferenceDialog />
           </div>
         </div>
       </section>
@@ -142,8 +118,6 @@ export default function Home() {
       <FilterSection 
         selectedTags={selectedTags}
         onTagsChange={setSelectedTags}
-        selectedColor={selectedColor}
-        onColorChange={setSelectedColor}
       />
 
       {/* Gallery View */}
@@ -152,29 +126,10 @@ export default function Home() {
         selectedTags={selectedTags}
       />
 
-      {/* Floating Action Buttons */}
-      <div className="fixed bottom-6 right-6 flex flex-col space-y-3">
-        <Button
-          size="lg"
-          className="rounded-full w-14 h-14 bg-accent hover:bg-accent/90 shadow-lg"
-          onClick={handleStartScraping}
-          disabled={isScrapingLoading}
-        >
-          <Bot className="w-6 h-6" />
-        </Button>
-        <Button
-          size="lg"
-          className="rounded-full w-14 h-14 shadow-lg"
-          onClick={() => {
-            const url = prompt("リファレンスのURLを入力してください:");
-            if (url) {
-              handleAddReference(url);
-            }
-          }}
-        >
-          <Plus className="w-6 h-6" />
-        </Button>
-      </div>
+
+
+      {/* ユーザーガイド */}
+      <UserGuide showOnFirstVisit={true} />
     </div>
   );
 }
