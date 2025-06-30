@@ -5,7 +5,7 @@ import { scraper } from "./services/scraper";
 import { aiAnalyzer } from "./services/aiAnalyzer";
 import { searchSchema, insertReferenceSchema } from "@shared/schema";
 import { z } from "zod";
-import { users } from "./db";
+import { db, users } from "./db";
 import { hashPassword, comparePassword, signJwt, verifyJwt } from "./services/auth";
 import { eq } from "drizzle-orm";
 
