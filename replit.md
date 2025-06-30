@@ -84,6 +84,12 @@ Changelog:
   - Replaced MemStorage with DatabaseStorage
   - Migrated schema to PostgreSQL with references and tags tables
   - Implemented persistent data storage with full CRUD operations
+- June 30, 2025. Completed all core functionality
+  - Fixed tag filtering with proper JSONB query operators
+  - Implemented manual reference addition with AI analysis
+  - Created fallback scraping system (Playwright constraints resolved)
+  - Added OpenAI integration for automatic tag generation
+  - Deployed full Japanese UI with search, filter, and copy features
 ```
 
 ## User Preferences

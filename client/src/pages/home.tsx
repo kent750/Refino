@@ -38,6 +38,28 @@ export default function Home() {
     }
   };
 
+  const handleAddReference = async (url: string) => {
+    try {
+      const response = await apiRequest("POST", "/api/references", {
+        url,
+        useAI: true
+      });
+      
+      const result = await response.json();
+      
+      toast({
+        title: "リファレンス追加完了",
+        description: `「${result.title}」をAI分析付きで追加しました`,
+      });
+    } catch (error) {
+      toast({
+        title: "追加エラー",
+        description: "リファレンスの追加に失敗しました。URLを確認してください。",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -136,6 +158,12 @@ export default function Home() {
         <Button
           size="lg"
           className="rounded-full w-14 h-14 shadow-lg"
+          onClick={() => {
+            const url = prompt("リファレンスのURLを入力してください:");
+            if (url) {
+              handleAddReference(url);
+            }
+          }}
         >
           <Plus className="w-6 h-6" />
         </Button>

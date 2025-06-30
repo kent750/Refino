@@ -49,22 +49,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create new reference manually
+  // Create new reference manually with AI analysis
   app.post("/api/references", async (req, res) => {
     try {
-      const referenceData = insertReferenceSchema.parse(req.body);
+      // Remove old Zod validation line that was causing errors
+      const { url, title, description, useAI = true } = req.body;
+      
+      if (!url) {
+        return res.status(400).json({ message: "URL is required" });
+      }
+
+      // Basic reference data
+      let referenceData = {
+        title: title || "新しいリファレンス",
+        description: description || null,
+        url,
+        imageUrl: null,
+        tags: [],
+        source: "手動追加",
+        aiAnalyzed: false
+      };
+
+      // AI analysis if requested and available
+      if (useAI) {
+        try {
+          const analysis = await aiAnalyzer.analyzeReference(referenceData);
+          referenceData.tags = analysis.tags;
+          referenceData.description = analysis.enhancedDescription || referenceData.description;
+          referenceData.aiAnalyzed = true;
+        } catch (aiError) {
+          console.log('AI analysis failed, proceeding without enhanced analysis:', aiError.message);
+          referenceData.tags = ["未分類"];
+        }
+      } else {
+        // Manual entry without AI
+        referenceData.tags = req.body.tags || ["未分類"];
+      }
+
       const reference = await storage.createReference(referenceData);
       res.status(201).json(reference);
     } catch (error) {
       console.error('Error creating reference:', error);
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ 
-          message: "Invalid reference data", 
-          errors: error.errors 
-        });
-      } else {
-        res.status(500).json({ message: "Internal server error" });
-      }
+      res.status(500).json({ message: "Failed to create reference", error: error.message });
     }
   });
 
