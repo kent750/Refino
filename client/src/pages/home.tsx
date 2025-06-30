@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import SearchBar from "@/components/SearchBar";
 import FilterSection from "@/components/FilterSection";
 import GalleryView from "@/components/GalleryView";
@@ -72,15 +73,15 @@ export default function Home() {
             <h1 className="text-xl font-bold text-foreground">DesignRef AI</h1>
           </div>
           <nav className="hidden md:flex items-center space-x-6">
-            <a href="#" className="text-muted-foreground hover:text-foreground transition-colors">
+            <Link href="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors">
               ダッシュボード
-            </a>
-            <a href="#" className="text-muted-foreground hover:text-foreground transition-colors">
+            </Link>
+            <Link href="/collections" className="text-muted-foreground hover:text-foreground transition-colors">
               コレクション
-            </a>
-            <a href="#" className="text-muted-foreground hover:text-foreground transition-colors">
+            </Link>
+            <Link href="/settings" className="text-muted-foreground hover:text-foreground transition-colors">
               設定
-            </a>
+            </Link>
             <Button 
               onClick={handleStartScraping}
               disabled={isScrapingLoading}

@@ -164,6 +164,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Delete reference
+  app.delete("/api/references/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const success = await storage.deleteReference(id);
+      
+      if (!success) {
+        return res.status(404).json({ message: "Reference not found" });
+      }
+      
+      res.json({ message: "Reference deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting reference:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Copy reference to clipboard (returns formatted text)
   app.post("/api/references/:id/copy", async (req, res) => {
     try {
