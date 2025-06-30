@@ -78,7 +78,12 @@ The monorepo structure allows for unified deployment while maintaining clear sep
 
 ```
 Changelog:
-- June 30, 2025. Initial setup
+- June 30, 2025. Initial setup with in-memory storage
+- June 30, 2025. Added PostgreSQL database with Drizzle ORM
+  - Created database connection in server/db.ts
+  - Replaced MemStorage with DatabaseStorage
+  - Migrated schema to PostgreSQL with references and tags tables
+  - Implemented persistent data storage with full CRUD operations
 ```
 
 ## User Preferences

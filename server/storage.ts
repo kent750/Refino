@@ -1,4 +1,6 @@
 import { references, tags, type Reference, type InsertReference, type Tag, type SearchParams } from "@shared/schema";
+import { db } from "./db";
+import { eq, and, or, like, sql, desc } from "drizzle-orm";
 
 export interface IStorage {
   // Reference CRUD operations
@@ -19,150 +21,173 @@ export interface IStorage {
   createReferences(references: InsertReference[]): Promise<Reference[]>;
 }
 
-export class MemStorage implements IStorage {
-  private references: Map<number, Reference>;
-  private tags: Map<string, Tag>;
-  private currentReferenceId: number;
-  private currentTagId: number;
-
+export class DatabaseStorage implements IStorage {
   constructor() {
-    this.references = new Map();
-    this.tags = new Map();
-    this.currentReferenceId = 1;
-    this.currentTagId = 1;
-    
-    // Initialize with some common tags
+    // Initialize with common tags if they don't exist
     this.initializeTags();
   }
 
-  private initializeTags() {
+  private async initializeTags() {
     const commonTags = [
       "ミニマル", "グリッドレイアウト", "採用LP", "3D要素", "ダークモード",
       "E-commerce", "ポートフォリオ", "コーポレート", "SaaS", "モバイル",
       "クリエイティブ", "ファッション", "テック", "スタートアップ"
     ];
     
-    commonTags.forEach(tagName => {
-      const tag: Tag = {
-        id: this.currentTagId++,
-        name: tagName,
-        count: 0
-      };
-      this.tags.set(tagName, tag);
-    });
+    try {
+      for (const tagName of commonTags) {
+        await this.createTag(tagName);
+      }
+    } catch (error) {
+      // Tags may already exist, ignore errors
+      console.log('Common tags already initialized');
+    }
   }
 
   async getReference(id: number): Promise<Reference | undefined> {
-    return this.references.get(id);
+    const [reference] = await db.select().from(references).where(eq(references.id, id));
+    return reference || undefined;
   }
 
   async createReference(insertReference: InsertReference): Promise<Reference> {
-    const id = this.currentReferenceId++;
-    const reference: Reference = {
-      ...insertReference,
-      id,
-      createdAt: new Date(),
-    };
-    
-    this.references.set(id, reference);
+    const [reference] = await db
+      .insert(references)
+      .values(insertReference)
+      .returning();
     
     // Update tag counts
-    reference.tags.forEach(tagName => {
-      this.incrementTagCount(tagName);
-    });
+    if (reference.tags && Array.isArray(reference.tags)) {
+      for (const tagName of reference.tags) {
+        await this.incrementTagCount(tagName);
+      }
+    }
     
     return reference;
   }
 
   async updateReference(id: number, updateData: Partial<InsertReference>): Promise<Reference | undefined> {
-    const existing = this.references.get(id);
-    if (!existing) return undefined;
+    const [updated] = await db
+      .update(references)
+      .set(updateData)
+      .where(eq(references.id, id))
+      .returning();
     
-    const updated: Reference = {
-      ...existing,
-      ...updateData,
-    };
-    
-    this.references.set(id, updated);
-    return updated;
+    return updated || undefined;
   }
 
   async deleteReference(id: number): Promise<boolean> {
-    return this.references.delete(id);
+    const result = await db
+      .delete(references)
+      .where(eq(references.id, id));
+    
+    return result.rowCount > 0;
   }
 
   async searchReferences(params: SearchParams): Promise<{ references: Reference[], total: number }> {
-    let allReferences = Array.from(this.references.values());
+    const conditions = [];
     
-    // Filter by query (search in title and description)
+    // Build search conditions
     if (params.query) {
-      const query = params.query.toLowerCase();
-      allReferences = allReferences.filter(ref => 
-        ref.title.toLowerCase().includes(query) ||
-        (ref.description && ref.description.toLowerCase().includes(query)) ||
-        ref.tags.some(tag => tag.toLowerCase().includes(query))
+      const searchTerm = `%${params.query.toLowerCase()}%`;
+      conditions.push(
+        or(
+          like(sql`LOWER(${references.title})`, searchTerm),
+          like(sql`LOWER(${references.description})`, searchTerm),
+          sql`EXISTS (
+            SELECT 1 FROM jsonb_array_elements_text(${references.tags}) AS tag
+            WHERE LOWER(tag) LIKE ${searchTerm}
+          )`
+        )
       );
     }
     
     // Filter by tags
     if (params.tags && params.tags.length > 0) {
-      allReferences = allReferences.filter(ref =>
-        params.tags!.some(tag => ref.tags.includes(tag))
+      const tagConditions = params.tags.map(tag => 
+        sql`${references.tags} ? ${tag}`
       );
+      conditions.push(or(...tagConditions));
     }
     
     // Filter by source
     if (params.source) {
-      allReferences = allReferences.filter(ref => ref.source === params.source);
+      conditions.push(eq(references.source, params.source));
     }
-    
-    // Sort by creation date (newest first)
-    allReferences.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-    
-    const total = allReferences.length;
-    const references = allReferences.slice(params.offset, params.offset + params.limit);
-    
-    return { references, total };
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // Get total count
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(references)
+      .where(whereClause);
+
+    // Get paginated results
+    const referenceResults = await db
+      .select()
+      .from(references)
+      .where(whereClause)
+      .orderBy(desc(references.createdAt))
+      .limit(params.limit)
+      .offset(params.offset);
+
+    return { 
+      references: referenceResults, 
+      total: Number(count) 
+    };
   }
 
   async getAllTags(): Promise<Tag[]> {
-    return Array.from(this.tags.values()).sort((a, b) => b.count - a.count);
+    return await db.select().from(tags).orderBy(desc(tags.count));
   }
 
   async createTag(name: string): Promise<Tag> {
-    const existing = this.tags.get(name);
-    if (existing) return existing;
-    
-    const tag: Tag = {
-      id: this.currentTagId++,
-      name,
-      count: 0
-    };
-    
-    this.tags.set(name, tag);
-    return tag;
+    try {
+      const [tag] = await db
+        .insert(tags)
+        .values({ name })
+        .returning();
+      return tag;
+    } catch (error) {
+      // Tag might already exist, get it
+      const [existing] = await db.select().from(tags).where(eq(tags.name, name));
+      if (existing) return existing;
+      throw error;
+    }
   }
 
   async incrementTagCount(name: string): Promise<void> {
-    let tag = this.tags.get(name);
-    if (!tag) {
-      tag = await this.createTag(name);
+    try {
+      await db
+        .update(tags)
+        .set({ count: sql`${tags.count} + 1` })
+        .where(eq(tags.name, name));
+    } catch (error) {
+      // Tag might not exist, create it first
+      await this.createTag(name);
+      await this.incrementTagCount(name);
     }
-    
-    tag.count++;
-    this.tags.set(name, tag);
   }
 
   async createReferences(insertReferences: InsertReference[]): Promise<Reference[]> {
-    const created: Reference[] = [];
+    if (insertReferences.length === 0) return [];
     
-    for (const insertRef of insertReferences) {
-      const reference = await this.createReference(insertRef);
-      created.push(reference);
+    const created = await db
+      .insert(references)
+      .values(insertReferences)
+      .returning();
+    
+    // Update tag counts for all references
+    for (const reference of created) {
+      if (reference.tags && Array.isArray(reference.tags)) {
+        for (const tagName of reference.tags) {
+          await this.incrementTagCount(tagName);
+        }
+      }
     }
     
     return created;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();

@@ -1,4 +1,4 @@
-import { pgTable, text, serial, jsonb, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, jsonb, timestamp, boolean, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -17,7 +17,7 @@ export const references = pgTable("references", {
 export const tags = pgTable("tags", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
-  count: serial("count").notNull().default(0),
+  count: integer("count").notNull().default(0),
 });
 
 export const insertReferenceSchema = createInsertSchema(references).omit({
