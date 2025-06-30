@@ -68,10 +68,13 @@ export default function Home() {
       <header className="bg-white border-b border-border sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <Palette className="text-primary-foreground w-4 h-4" />
+            <div className="w-8 h-8 flex items-center justify-center">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="7" y="9" width="16" height="16" rx="3" fill="#2563eb"/>
+                <rect x="11" y="5" width="16" height="16" rx="3" fill="#3b82f6" fillOpacity="0.85"/>
+              </svg>
             </div>
-            <h1 className="text-xl font-bold text-foreground">DesignRef AI</h1>
+            <h1 className="text-xl font-bold text-foreground">Refino</h1>
           </div>
           <nav className="hidden md:flex items-center space-x-6">
             <Link href="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors">
@@ -99,11 +102,11 @@ export default function Home() {
       <section className="bg-white border-b border-border">
         <div className="max-w-7xl mx-auto px-6 py-8">
           <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold text-foreground mb-3">
-              デザインリファレンスを瞬時に発見
+            <h2 className="text-4xl font-extrabold mb-2" style={{ fontFamily: 'Poppins, sans-serif' }}>
+              Discover Stunning Designs Instantly
             </h2>
             <p className="text-muted-foreground text-lg">
-              AIタグ分類と自動クローリングで、理想のデザインを効率的に収集
+              デザインリファレンスを瞬時に発見
             </p>
           </div>
           
